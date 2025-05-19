@@ -1,159 +1,129 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.17;
+pragma solidity ^0.8.19;
 
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+contract TokenBasedVotingSystem {
+    // State variables
+    address public owner;
+    mapping(address => uint256) public tokenBalances;
+    mapping(address => bool) public hasVoted;
+    mapping(uint256 => uint256) public voteCounts;
+    mapping(address => uint256) public votedOption;
 
-/**
- * @title Project
- * @dev Token-Based Voting System with core governance functionalities
- */
-contract Project is ERC20, Ownable {
-    // Proposal struct to store proposal details
-    struct Proposal {
-        uint256 id;
-        address proposer;
-        string title;
-        string description;
-        uint256 forVotes;
-        uint256 againstVotes;
-        uint256 startTime;
-        uint256 endTime;
-        bool executed;
-        mapping(address => bool) hasVoted;
-    }
+    uint256 public totalSupply;
+    uint256 public votingDeadline;
+    uint256 public totalOptions;
+    bool public votingActive;
 
-    // Proposal counter
-    uint256 public proposalCount;
-    
-    // Minimum token balance required to create a proposal (e.g., 100 tokens)
-    uint256 public proposalThreshold = 100 * 10**18;
-    
-    // Standard voting period in seconds (3 days)
-    uint256 public votingPeriod = 3 days;
-    
-    // Mapping from proposal id to proposal
-    mapping(uint256 => Proposal) public proposals;
-    
-    // Delegation system
-    mapping(address => address) public delegates;
-    mapping(address => uint256) public delegatedPower;
-    
     // Events
-    event ProposalCreated(uint256 indexed proposalId, address indexed proposer, string title, uint256 startTime, uint256 endTime);
-    event VoteCast(uint256 indexed proposalId, address indexed voter, bool support, uint256 weight);
-    event ProposalExecuted(uint256 indexed proposalId);
-    event DelegateChanged(address indexed delegator, address indexed fromDelegate, address indexed toDelegate);
+    event TokensIssued(address indexed recipient, uint256 amount);
+    event VoteCast(address indexed voter, uint256 option, uint256 weight);
+    event VotingEnded();
 
-    constructor(string memory name, string memory symbol, uint256 initialSupply) 
-        ERC20(name, symbol) 
-        Ownable(msg.sender) 
+    // Modifiers
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Only owner can perform this action");
+        _;
+    }
+
+    modifier votingInProgress() {
+        require(votingActive && block.timestamp <= votingDeadline, "Voting is not active");
+        _;
+    }
+
+    modifier hasNotVoted() {
+        require(!hasVoted[msg.sender], "You have already voted");
+        _;
+    }
+
+    // Constructor
+    constructor(uint256 _votingDurationInDays, uint256 _totalOptions) {
+        require(_totalOptions > 0, "There must be at least one option");
+        owner = msg.sender;
+        votingDeadline = block.timestamp + (_votingDurationInDays * 1 days);
+        totalOptions = _totalOptions;
+        votingActive = true;
+    }
+
+    // Issue tokens
+    function issueTokens(address[] memory recipients, uint256[] memory amounts)
+        external
+        onlyOwner
     {
-        _mint(msg.sender, initialSupply);
+        require(recipients.length == amounts.length, "Arrays length mismatch");
+
+        for (uint256 i = 0; i < recipients.length; i++) {
+            require(recipients[i] != address(0), "Invalid recipient address");
+            require(amounts[i] > 0, "Token amount must be greater than zero");
+
+            tokenBalances[recipients[i]] += amounts[i];
+            totalSupply += amounts[i];
+            emit TokensIssued(recipients[i], amounts[i]);
+        }
     }
 
-    /**
-     * @dev Create a new proposal
-     * @param title Title of the proposal
-     * @param description Description of the proposal
-     * @return The ID of the newly created proposal
-     */
-    function createProposal(string memory title, string memory description) external returns (uint256) {
-        // Check if sender has enough tokens to create proposal
-        require(
-            getVotingPower(msg.sender) >= proposalThreshold,
-            "Project: proposer votes below threshold"
-        );
+    // Cast vote
+    function castVote(uint256 option)
+        external
+        votingInProgress
+        hasNotVoted
+    {
+        require(option >= 1 && option <= totalOptions, "Invalid voting option");
+        uint256 voteWeight = tokenBalances[msg.sender];
+        require(voteWeight > 0, "No tokens to vote with");
 
-        uint256 proposalId = proposalCount++;
+        voteCounts[option] += voteWeight;
+        hasVoted[msg.sender] = true;
+        votedOption[msg.sender] = option;
 
-        Proposal storage proposal = proposals[proposalId];
-        proposal.id = proposalId;
-        proposal.proposer = msg.sender;
-        proposal.title = title;
-        proposal.description = description;
-        proposal.startTime = block.timestamp;
-        proposal.endTime = block.timestamp + votingPeriod;
-
-        emit ProposalCreated(proposalId, msg.sender, title, proposal.startTime, proposal.endTime);
-
-        return proposalId;
+        emit VoteCast(msg.sender, option, voteWeight);
     }
 
-    /**
-     * @dev Cast a vote on a proposal
-     * @param proposalId The ID of the proposal to vote on
-     * @param support True for 'For', False for 'Against'
-     */
-    function castVote(uint256 proposalId, bool support) external {
-        Proposal storage proposal = proposals[proposalId];
-        
-        require(block.timestamp >= proposal.startTime, "Project: voting hasn't started");
-        require(block.timestamp <= proposal.endTime, "Project: voting is closed");
-        require(!proposal.hasVoted[msg.sender], "Project: already voted");
-        
-        uint256 votingPower = getVotingPower(msg.sender);
-        require(votingPower > 0, "Project: caller has no voting power");
-        
-        // Mark as voted
-        proposal.hasVoted[msg.sender] = true;
-        
-        if (support) {
-            proposal.forVotes += votingPower;
-        } else {
-            proposal.againstVotes += votingPower;
+    // Get results
+    function getResults()
+        external
+        view
+        returns (uint256 winningOption, uint256 winningVotes, uint256[] memory allVotes)
+    {
+        require(block.timestamp > votingDeadline || !votingActive, "Voting still in progress");
+
+        allVotes = new uint256[](totalOptions);
+        winningVotes = 0;
+        winningOption = 1;
+
+        for (uint256 i = 1; i <= totalOptions; i++) {
+            uint256 count = voteCounts[i];
+            allVotes[i - 1] = count;
+            if (count > winningVotes) {
+                winningVotes = count;
+                winningOption = i;
+            }
         }
-        
-        emit VoteCast(proposalId, msg.sender, support, votingPower);
     }
 
-    /**
-     * @dev Delegate votes from sender to `delegatee`
-     * @param delegatee The address to delegate votes to
-     */
-    function delegate(address delegatee) external {
-        address delegator = msg.sender;
-        address currentDelegate = delegates[delegator];
-        uint256 delegatorBalance = balanceOf(delegator);
-
-        if (currentDelegate != address(0)) {
-            delegatedPower[currentDelegate] -= delegatorBalance;
-        }
-
-        if (delegatee != address(0)) {
-            delegatedPower[delegatee] += delegatorBalance;
-        }
-
-        delegates[delegator] = delegatee;
-        
-        emit DelegateChanged(delegator, currentDelegate, delegatee);
+    // End voting
+    function endVoting() external onlyOwner {
+        require(votingActive, "Voting already ended");
+        votingActive = false;
+        emit VotingEnded();
     }
 
-    /**
-     * @dev Get total voting power for an address (own balance + delegated)
-     * @param account The address to get voting power for
-     * @return The total voting power
-     */
-    function getVotingPower(address account) public view returns (uint256) {
-        return balanceOf(account) + delegatedPower[account];
+    // Get voter info
+    function getVoterInfo(address voter)
+        external
+        view
+        returns (uint256 balance, bool voted, uint256 option)
+    {
+        balance = tokenBalances[voter];
+        voted = hasVoted[voter];
+        option = voted ? votedOption[voter] : 0;
     }
 
-    /**
-     * @dev Override transfer function to update delegations
-     */
-    function _update(address from, address to, uint256 amount) internal override {
-        super._update(from, to, amount);
-
-        // Update delegation if the sender has delegated
-        address fromDelegate = delegates[from];
-        if (fromDelegate != address(0)) {
-            delegatedPower[fromDelegate] -= amount;
-        }
-
-        // Update delegation if the recipient has delegated
-        address toDelegate = delegates[to];
-        if (toDelegate != address(0)) {
-            delegatedPower[toDelegate] += amount;
-        }
+    // Get contract info
+    function getContractInfo()
+        external
+        view
+        returns (uint256 deadline, uint256 options, bool active, uint256 supply)
+    {
+        return (votingDeadline, totalOptions, votingActive, totalSupply);
     }
 }
