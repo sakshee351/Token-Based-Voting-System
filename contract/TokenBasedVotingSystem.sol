@@ -2,12 +2,12 @@
 pragma solidity ^0.8.19;
 
 contract TokenBasedVotingSystem {
-    // State variables
     address public owner;
     mapping(address => uint256) public tokenBalances;
     mapping(address => bool) public hasVoted;
     mapping(uint256 => uint256) public voteCounts;
     mapping(address => uint256) public votedOption;
+    mapping(uint256 => bool) public disabledOptions;
     address[] public votersList;
 
     uint256 public totalSupply;
@@ -24,31 +24,32 @@ contract TokenBasedVotingSystem {
     event VotingPaused();
     event VotingUnpaused();
     event VotingExtended(uint256 newDeadline);
+    event OwnerChanged(address indexed oldOwner, address indexed newOwner);
+    event VoterRemoved(address indexed voter);
+    event OptionDisabled(uint256 indexed option);
 
-    // Modifiers
     modifier onlyOwner() {
-        require(msg.sender == owner, "Only owner can perform this action");
+        require(msg.sender == owner, "Only owner");
         _;
     }
 
     modifier votingInProgress() {
-        require(votingActive && !paused && block.timestamp <= votingDeadline, "Voting is not active");
+        require(votingActive && !paused && block.timestamp <= votingDeadline, "Voting not active");
         _;
     }
 
     modifier hasNotVoted() {
-        require(!hasVoted[msg.sender], "You have already voted");
+        require(!hasVoted[msg.sender], "Already voted");
         _;
     }
 
     modifier hasVotedAlready() {
-        require(hasVoted[msg.sender], "You have not voted yet");
+        require(hasVoted[msg.sender], "Haven't voted");
         _;
     }
 
-    // Constructor
     constructor(uint256 _votingDurationInDays, uint256 _totalOptions) {
-        require(_totalOptions > 0, "There must be at least one option");
+        require(_totalOptions > 0, "At least one option");
         owner = msg.sender;
         votingDeadline = block.timestamp + (_votingDurationInDays * 1 days);
         totalOptions = _totalOptions;
@@ -56,16 +57,11 @@ contract TokenBasedVotingSystem {
         paused = false;
     }
 
-    // Issue tokens
-    function issueTokens(address[] memory recipients, uint256[] memory amounts)
-        external
-        onlyOwner
-    {
-        require(recipients.length == amounts.length, "Arrays length mismatch");
-
+    function issueTokens(address[] memory recipients, uint256[] memory amounts) external onlyOwner {
+        require(recipients.length == amounts.length, "Length mismatch");
         for (uint256 i = 0; i < recipients.length; i++) {
-            require(recipients[i] != address(0), "Invalid recipient address");
-            require(amounts[i] > 0, "Token amount must be greater than zero");
+            require(recipients[i] != address(0), "Invalid address");
+            require(amounts[i] > 0, "Zero tokens");
 
             tokenBalances[recipients[i]] += amounts[i];
             totalSupply += amounts[i];
@@ -73,59 +69,44 @@ contract TokenBasedVotingSystem {
         }
     }
 
-    // Cast vote
-    function castVote(uint256 option)
-        external
-        votingInProgress
-        hasNotVoted
-    {
-        require(option >= 1 && option <= totalOptions, "Invalid voting option");
-        uint256 voteWeight = tokenBalances[msg.sender];
-        require(voteWeight > 0, "No tokens to vote with");
+    function castVote(uint256 option) external votingInProgress hasNotVoted {
+        require(option >= 1 && option <= totalOptions, "Invalid option");
+        require(!disabledOptions[option], "Option disabled");
+        uint256 weight = tokenBalances[msg.sender];
+        require(weight > 0, "No tokens");
 
-        voteCounts[option] += voteWeight;
+        voteCounts[option] += weight;
         hasVoted[msg.sender] = true;
         votedOption[msg.sender] = option;
         votersList.push(msg.sender);
-
-        emit VoteCast(msg.sender, option, voteWeight);
+        emit VoteCast(msg.sender, option, weight);
     }
 
-    // Revoke vote before voting ends
     function revokeVote() external votingInProgress hasVotedAlready {
         uint256 option = votedOption[msg.sender];
-        uint256 voteWeight = tokenBalances[msg.sender];
+        uint256 weight = tokenBalances[msg.sender];
 
-        voteCounts[option] -= voteWeight;
+        voteCounts[option] -= weight;
         hasVoted[msg.sender] = false;
         votedOption[msg.sender] = 0;
-
-        emit VoteRevoked(msg.sender, option, voteWeight);
+        emit VoteRevoked(msg.sender, option, weight);
     }
 
-    // Change vote before voting ends
     function changeVote(uint256 newOption) external votingInProgress hasVotedAlready {
-        require(newOption >= 1 && newOption <= totalOptions, "Invalid voting option");
+        require(newOption >= 1 && newOption <= totalOptions, "Invalid option");
+        require(!disabledOptions[newOption], "Option disabled");
+
         uint256 oldOption = votedOption[msg.sender];
-        uint256 voteWeight = tokenBalances[msg.sender];
+        uint256 weight = tokenBalances[msg.sender];
 
-        // Remove old vote weight
-        voteCounts[oldOption] -= voteWeight;
-
-        // Add new vote weight
-        voteCounts[newOption] += voteWeight;
+        voteCounts[oldOption] -= weight;
+        voteCounts[newOption] += weight;
         votedOption[msg.sender] = newOption;
-
-        emit VoteCast(msg.sender, newOption, voteWeight);
+        emit VoteCast(msg.sender, newOption, weight);
     }
 
-    // Get results
-    function getResults()
-        external
-        view
-        returns (uint256 winningOption, uint256 winningVotes, uint256[] memory allVotes)
-    {
-        require(block.timestamp > votingDeadline || !votingActive, "Voting still in progress");
+    function getResults() external view returns (uint256 winningOption, uint256 winningVotes, uint256[] memory allVotes) {
+        require(block.timestamp > votingDeadline || !votingActive, "Voting ongoing");
 
         allVotes = new uint256[](totalOptions);
         winningVotes = 0;
@@ -141,72 +122,54 @@ contract TokenBasedVotingSystem {
         }
     }
 
-    // End voting
     function endVoting() external onlyOwner {
-        require(votingActive, "Voting already ended");
+        require(votingActive, "Already ended");
         votingActive = false;
         emit VotingEnded();
     }
 
-    // Pause voting
     function pauseVoting() external onlyOwner {
         paused = true;
         emit VotingPaused();
     }
 
-    // Unpause voting
     function unpauseVoting() external onlyOwner {
         paused = false;
         emit VotingUnpaused();
     }
 
-    // Extend voting deadline
     function extendVoting(uint256 extraDays) external onlyOwner {
-        require(votingActive, "Voting has ended");
+        require(votingActive, "Voting ended");
         votingDeadline += (extraDays * 1 days);
         emit VotingExtended(votingDeadline);
     }
 
-    // Get voter info
-    function getVoterInfo(address voter)
-        external
-        view
-        returns (uint256 balance, bool voted, uint256 option)
-    {
+    function getVoterInfo(address voter) external view returns (uint256 balance, bool voted, uint256 option) {
         balance = tokenBalances[voter];
         voted = hasVoted[voter];
         option = voted ? votedOption[voter] : 0;
     }
 
-    // Get contract info
-    function getContractInfo()
-        external
-        view
-        returns (uint256 deadline, uint256 options, bool active, uint256 supply, bool isPaused)
-    {
+    function getContractInfo() external view returns (uint256 deadline, uint256 options, bool active, uint256 supply, bool isPaused) {
         return (votingDeadline, totalOptions, votingActive, totalSupply, paused);
     }
 
-    // Get all voters
     function getAllVoters() external view returns (address[] memory) {
         return votersList;
     }
 
-    // Get vote weight of a voter
     function getVoteWeight(address voter) external view returns (uint256) {
         return tokenBalances[voter];
     }
 
-    // Reset voting (clears all votes and voters)
     function resetVoting(uint256 _votingDurationInDays, uint256 _totalOptions) external onlyOwner {
-        require(_totalOptions > 0, "There must be at least one option");
+        require(_totalOptions > 0, "Must have options");
 
-        // Reset all votes
         for (uint256 i = 1; i <= totalOptions; i++) {
             voteCounts[i] = 0;
+            disabledOptions[i] = false;
         }
 
-        // Reset voter info
         for (uint256 i = 0; i < votersList.length; i++) {
             address voter = votersList[i];
             hasVoted[voter] = false;
@@ -214,10 +177,68 @@ contract TokenBasedVotingSystem {
         }
         delete votersList;
 
-        // Reset voting parameters
         totalOptions = _totalOptions;
         votingDeadline = block.timestamp + (_votingDurationInDays * 1 days);
         votingActive = true;
         paused = false;
+    }
+
+    // 🔥 New Extra Functions
+
+    function withdrawTokens(address to, uint256 amount) external onlyOwner {
+        require(tokenBalances[address(this)] >= amount, "Insufficient tokens");
+        tokenBalances[address(this)] -= amount;
+        tokenBalances[to] += amount;
+    }
+
+    function changeOwner(address newOwner) external onlyOwner {
+        require(newOwner != address(0), "Zero address");
+        emit OwnerChanged(owner, newOwner);
+        owner = newOwner;
+    }
+
+    function removeVoter(address voter) external onlyOwner {
+        require(hasVoted[voter], "Not voted");
+        uint256 option = votedOption[voter];
+        uint256 weight = tokenBalances[voter];
+        voteCounts[option] -= weight;
+        hasVoted[voter] = false;
+        votedOption[voter] = 0;
+        emit VoterRemoved(voter);
+    }
+
+    function getVoteSummary() external view returns (uint256 totalVoters, uint256 totalVotes) {
+        totalVoters = votersList.length;
+        totalVotes = 0;
+        for (uint256 i = 1; i <= totalOptions; i++) {
+            totalVotes += voteCounts[i];
+        }
+    }
+
+    function getVotePercentages() external view returns (uint256[] memory percentages) {
+        percentages = new uint256[](totalOptions);
+        uint256 totalVotes = 0;
+
+        for (uint256 i = 1; i <= totalOptions; i++) {
+            totalVotes += voteCounts[i];
+        }
+
+        for (uint256 i = 1; i <= totalOptions; i++) {
+            if (totalVotes > 0) {
+                percentages[i - 1] = (voteCounts[i] * 100) / totalVotes;
+            } else {
+                percentages[i - 1] = 0;
+            }
+        }
+    }
+
+    function disableOption(uint256 option) external onlyOwner {
+        require(option >= 1 && option <= totalOptions, "Invalid option");
+        disabledOptions[option] = true;
+        emit OptionDisabled(option);
+    }
+
+    function isOptionDisabled(uint256 option) external view returns (bool) {
+        return disabledOptions[option];
     }
 }
