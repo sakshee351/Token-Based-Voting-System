@@ -242,3 +242,4 @@ contract TokenBasedVotingSystem {
         return disabledOptions[option];
     }
 }
+ ;
