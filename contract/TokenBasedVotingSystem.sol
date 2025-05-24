@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.19
 
 contract TokenBasedVotingSystem {
     address public owner;
@@ -17,7 +17,7 @@ contract TokenBasedVotingSystem {
     bool public paused;
 
     // Events
-    event TokensIssued(address indexed recipient, uint256 amount);
+    event TokensIssud(address indexed recipient, uint256 amount);
     event VoteCast(address indexed voter, uint256 option, uint256 weight);
     event VoteRevoked(address indexed voter, uint256 option, uint256 weight);
     event VotingEnded();
