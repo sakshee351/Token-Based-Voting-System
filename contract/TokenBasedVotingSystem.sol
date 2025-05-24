@@ -12,7 +12,7 @@ contract TokenBasedVotingSystem {
 
     uint256 public totalSupply;
     uint256 public votingDeadline;
-    uint256 public totalOptions;
+    uint256 public totalOptions\
     bool public votingActive;
     bool public paused;
 
