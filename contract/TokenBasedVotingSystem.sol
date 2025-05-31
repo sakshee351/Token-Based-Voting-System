@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19
+pragma solidity ^0.8.19;
 
 contract TokenBasedVotingSystem {
     address public owner;
@@ -8,14 +8,16 @@ contract TokenBasedVotingSystem {
     mapping(uint256 => uint256) public voteCounts;
     mapping(address => uint256) public votedOption;
     mapping(uint256 => bool) public disabledOptions;
-    address[] public votersLis
+    address[] public votersList;
 
     uint256 public totalSupply;
     uint256 public votingDeadline;
-    uint256 public totalOptions\
-    bool public
+    uint256 public totalOptions;
+    bool public votingActive;
+    bool public paused;
+
     // Events
-    event TokensIssud(address indexed recipient, uint256 amunt);
+    event TokensIssued(address indexed recipient, uint256 amount);
     event VoteCast(address indexed voter, uint256 option, uint256 weight);
     event VoteRevoked(address indexed voter, uint256 option, uint256 weight);
     event VotingEnded();
@@ -25,6 +27,7 @@ contract TokenBasedVotingSystem {
     event OwnerChanged(address indexed oldOwner, address indexed newOwner);
     event VoterRemoved(address indexed voter);
     event OptionDisabled(uint256 indexed option);
+    event VoteDelegated(address indexed from, address indexed to, uint256 weight);
 
     modifier onlyOwner() {
         require(msg.sender == owner, "Only owner");
@@ -183,18 +186,35 @@ contract TokenBasedVotingSystem {
 
     // 🔥 New Extra Functions
 
+    // Delegate your voting power to another voter
+    function delegateVote(address to) external votingInProgress hasNotVoted {
+        require(to != address(0), "Cannot delegate to zero address");
+        require(to != msg.sender, "Cannot delegate to yourself");
+        uint256 weight = tokenBalances[msg.sender];
+        require(weight > 0, "No tokens to delegate");
+        require(!hasVoted[to], "Delegatee already voted");
+
+        tokenBalances[msg.sender] = 0; // remove tokens from delegator
+        tokenBalances[to] += weight;   // add tokens to delegatee
+
+        emit VoteDelegated(msg.sender, to, weight);
+    }
+
+    // Withdraw tokens held by contract back to owner
     function withdrawTokens(address to, uint256 amount) external onlyOwner {
         require(tokenBalances[address(this)] >= amount, "Insufficient tokens");
         tokenBalances[address(this)] -= amount;
         tokenBalances[to] += amount;
     }
 
+    // Change ownership
     function changeOwner(address newOwner) external onlyOwner {
         require(newOwner != address(0), "Zero address");
         emit OwnerChanged(owner, newOwner);
         owner = newOwner;
     }
 
+    // Remove a voter (undo their vote)
     function removeVoter(address voter) external onlyOwner {
         require(hasVoted[voter], "Not voted");
         uint256 option = votedOption[voter];
@@ -239,5 +259,9 @@ contract TokenBasedVotingSystem {
     function isOptionDisabled(uint256 option) external view returns (bool) {
         return disabledOptions[option];
     }
+
+    // Check if voting is currently paused or active
+    function isVotingActive() external view returns (bool) {
+        return votingActive && !paused && block.timestamp <= votingDeadline;
+    }
 }
- ;
