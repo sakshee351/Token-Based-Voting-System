@@ -11,7 +11,7 @@ contract TokenBasedVotingSystem {
     address[] public votersList;
 
     uint256 public totalSupply;
-    uint256 public votingDeadline;
+    uint256 public votingDeadline
     uint256 public totalOptions;
     bool public votingActive;
     bool public paused;
