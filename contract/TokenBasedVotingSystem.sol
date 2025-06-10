@@ -3,7 +3,7 @@ pragma solidity ^0.8.19;
 
 contract TokenBasedVotingSystem {
     address public owner;
-    mapping(address => uint256) public tokenBalances;
+[ mapping(address => uint256) public tokenBalances;
     mapping(address => bool) public hasVoted;
     mapping(uint256 => uint256) public voteCounts;
     mapping(address => uint256) public votedOption;
