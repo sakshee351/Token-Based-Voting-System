@@ -8,8 +8,7 @@ contract TokenBasedVotingSystem {
     mapping(uint256 => uint256) public voteCounts;
     mapping(address => uint256) public votedOption;
     mapping(uint256 => bool) public disabledOptions;
-    address[] public votersLis
-
+    address[] pub
     uint256 public totalSupply;
     uint256 public votingDeadline
     uint256 public totalOptions;
