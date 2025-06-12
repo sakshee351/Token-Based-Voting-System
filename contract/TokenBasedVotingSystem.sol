@@ -13,8 +13,7 @@ contract TokenBasedVotingSystem {
     uint256 public votingDeadline
     uint256 public totalOptions;
     bool public votingActive;
-    bool public paused;
-
+    bool public
     // Events
     event TokensIssued(address indexed recipient, uint256 amount);
     event VoteCast(address indexed voter, uint256 option, uint256 weight);
