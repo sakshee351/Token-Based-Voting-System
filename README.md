@@ -18,7 +18,7 @@ Multi-Signature Execution: Require multiple approvals for proposal execution
 Specialized Proposal Types: Create templates for different governance actions
 Off-Chain Voting with On-Chain Execution: Gas-efficient voting mechanisms
 Timelock Controller: Add time delays for sensitive governance actions
-Mobile Interface: Develop dedicated mobile app for governance participation
+Mobile Interface: Develop dedicated mobile app for governance participati
 Cross-Chain Governance: Extend voting capabilities across multiple blockchains
 Getting Started
 Prerequisites
