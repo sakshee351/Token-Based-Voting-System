@@ -15,6 +15,13 @@ contract TokenBasedVotingSystem {
     bool public votingActive;
     bool public
     // Events
+ event TokensIssued(address indexed recipient, uint256 amount);
+    event VoteCast(address indexed voter, uint256 option, uint256 weight);
+    event VoteRevoked(address indexed voter, uint256 option, uint256 weight);
+    event VotingEnded();
+    event VotingPaused();
+    event VotingUnpaused();
+
     event TokensIssued(address indexed recipient, uint256 amount);
     event VoteCast(address indexed voter, uint256 option, uint256 weight);
     event VoteRevoked(address indexed voter, uint256 option, uint256 weight);
