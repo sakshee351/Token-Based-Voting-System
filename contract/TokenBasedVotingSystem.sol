@@ -5,7 +5,7 @@ contract TokenBasedVotingSystem {
     address public owner;
 [e;
     bool public
-    // Events
+    
  event TokensIssued(address indexed recipient, uint256 amount);
     event VoteCast(address indexed voter, uint256 option, uint256 weight);
     event VoteRevoked(address indexed voter, uint256 option, uint256 weight);
