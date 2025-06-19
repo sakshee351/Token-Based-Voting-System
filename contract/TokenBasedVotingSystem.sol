@@ -95,10 +95,6 @@ contract TokenBasedVotingSystem {
         emit VoteRevoked(msg.sender, option, weight);
     }
 
-    function changeVote(uint256 newOption) external votingInProgress hasVotedAlready {
-        require(newOption >= 1 && newOption <= totalOptions, "Invalid option");
-        require(!disabledOptions[newOption], "Option disabled");
-
         uint256 oldOption = votedOption[msg.sender];
         uint256 weight = tokenBalances[msg.sender];
 
