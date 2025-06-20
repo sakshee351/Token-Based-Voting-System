@@ -98,10 +98,7 @@ contract TokenBasedVotingSystem {
         uint256 oldOption = votedOption[msg.sender];
         uint256 weight = tokenBalances[msg.sender];
 
-        voteCounts[oldOption] -= weight;
-        voteCounts[newOption] += weight;
-        votedOption[msg.sender] = newOption;
-        emit VoteCast(msg.sender, newOption, weight);
+       
     }
 
     function getResults() external view returns (uint256 winningOption, uint256 winningVotes, uint256[] memory allVotes) {
