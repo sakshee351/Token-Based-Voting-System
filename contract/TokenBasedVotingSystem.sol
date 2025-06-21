@@ -41,10 +41,6 @@ contract TokenBasedVotingSystem {
         _;
     }
 
-    modifier hasNotVoted() {
-        require(!hasVoted[msg.sender], "Already voted");
-        _;
-    }
 
     modifier hasVotedAlready() {
         require(hasVoted[msg.sender], "Haven't voted");
