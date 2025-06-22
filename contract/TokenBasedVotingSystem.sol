@@ -3,21 +3,18 @@ pragma solidity ^0.8.19;
 
 contract TokenBasedVotingSystem {
     address public owner;
-[e;
-    bool public
-    
- event TokensIssued(address indexed recipient, uint256 amount);
-    event VoteCast(address indexed voter, uint256 option, uint256 weight);
-    event VoteRevoked(address indexed voter, uint256 option, uint256 weight);
-    event VotingEnded();
-    event VotingPaused();
-    event VotingUnpaused();
- event TokensIssued(address indexed recipient, uint256 amount);
-    event VoteCast(address indexed voter, uint256 option, uint256 weight);
-    event VoteRevoked(address indexed voter, uint256 option, uint256 
-    event VotingEnded();
-    event VotingPaused();
-    event VotingUnpaused();
+    uint256 public totalSupply;
+    uint256 public totalOptions;
+    uint256 public votingDeadline;
+    bool public votingActive;
+    bool public paused;
+
+    mapping(address => uint256) public tokenBalances;
+    mapping(uint256 => uint256) public voteCounts;
+    mapping(address => bool) public hasVoted;
+    mapping(address => uint256) public votedOption;
+    mapping(uint256 => bool) public disabledOptions;
+    address[] public votersList;
 
     event TokensIssued(address indexed recipient, uint256 amount);
     event VoteCast(address indexed voter, uint256 option, uint256 weight);
@@ -41,6 +38,10 @@ contract TokenBasedVotingSystem {
         _;
     }
 
+    modifier hasNotVoted() {
+        require(!hasVoted[msg.sender], "Already voted");
+        _;
+    }
 
     modifier hasVotedAlready() {
         require(hasVoted[msg.sender], "Haven't voted");
@@ -61,7 +62,6 @@ contract TokenBasedVotingSystem {
         for (uint256 i = 0; i < recipients.length; i++) {
             require(recipients[i] != address(0), "Invalid address");
             require(amounts[i] > 0, "Zero tokens");
-
             tokenBalances[recipients[i]] += amounts[i];
             totalSupply += amounts[i];
             emit TokensIssued(recipients[i], amounts[i]);
@@ -89,12 +89,6 @@ contract TokenBasedVotingSystem {
         hasVoted[msg.sender] = false;
         votedOption[msg.sender] = 0;
         emit VoteRevoked(msg.sender, option, weight);
-    }
-
-        uint256 oldOption = votedOption[msg.sender];
-        uint256 weight = tokenBalances[msg.sender];
-
-       
     }
 
     function getResults() external view returns (uint256 winningOption, uint256 winningVotes, uint256[] memory allVotes) {
@@ -175,9 +169,6 @@ contract TokenBasedVotingSystem {
         paused = false;
     }
 
-    // 🔥 New Extra Functions
-
-    // Delegate your voting power to another voter
     function delegateVote(address to) external votingInProgress hasNotVoted {
         require(to != address(0), "Cannot delegate to zero address");
         require(to != msg.sender, "Cannot delegate to yourself");
@@ -185,27 +176,24 @@ contract TokenBasedVotingSystem {
         require(weight > 0, "No tokens to delegate");
         require(!hasVoted[to], "Delegatee already voted");
 
-        tokenBalances[msg.sender] = 0; // remove tokens from delegator
-        tokenBalances[to] += weight;   // add tokens to delegatee
+        tokenBalances[msg.sender] = 0;
+        tokenBalances[to] += weight;
 
         emit VoteDelegated(msg.sender, to, weight);
     }
 
-    // Withdraw tokens held by contract back to owner
     function withdrawTokens(address to, uint256 amount) external onlyOwner {
         require(tokenBalances[address(this)] >= amount, "Insufficient tokens");
         tokenBalances[address(this)] -= amount;
         tokenBalances[to] += amount;
     }
 
-    // Change ownership
     function changeOwner(address newOwner) external onlyOwner {
         require(newOwner != address(0), "Zero address");
         emit OwnerChanged(owner, newOwner);
         owner = newOwner;
     }
 
-    // Remove a voter (undo their vote)
     function removeVoter(address voter) external onlyOwner {
         require(hasVoted[voter], "Not voted");
         uint256 option = votedOption[voter];
@@ -251,7 +239,6 @@ contract TokenBasedVotingSystem {
         return disabledOptions[option];
     }
 
-    // Check if voting is currently paused or active
     function isVotingActive() external view returns (bool) {
         return votingActive && !paused && block.timestamp <= votingDeadline;
     }
