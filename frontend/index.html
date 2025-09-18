@@ -1,1 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Token-Based Voting System</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.1/ethers.umd.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <h1>🗳️ Token-Based Voting System</h1>
+            <p class="tagline">Decentralized Governance Platform</p>
+            <div class="wallet-section">
+                <button id="connectWallet" class="btn btn-primary">Connect Wallet</button>
+                <div id="walletInfo" class="wallet-info hidden">
+                    <span id="walletAddress"></span>
+                    <span id="tokenBalance" class="token-balance"></span>
+                </div>
+            </div>
+        </header>
 
+        <!-- Navigation -->
+        <nav class="nav-tabs">
+            <button class="tab-btn active" data-tab="proposals">Proposals</button>
+            <button class="tab-btn" data-tab="create">Create Proposal</button>
+            <button class="tab-btn" data-tab="delegate">Delegate</button>
+            <button class="tab-btn" data-tab="stats">Statistics</button>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Proposals Tab -->
+            <div id="proposals" class="tab-content active">
+                <div class="section-header">
+                    <h2>Active Proposals</h2>
+                    <div class="filter-controls">
+                        <select id="proposalFilter">
+                            <option value="all">All Proposals</option>
+                            <option value="active">Active</option>
+                            <option value="ended">Ended</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="proposalsList" class="proposals-list">
+                    <!-- Proposals will be loaded here -->
+                    <div class="loading">Loading proposals...</div>
+                </div>
+            </div>
+
+            <!-- Create Proposal Tab -->
+            <div id="create" class="tab-content">
+                <div class="section-header">
+                    <h2>Create New Proposal</h2>
+                    <p class="section-desc">Submit a proposal for community voting</p>
+                </div>
+                <form id="createProposalForm" class="proposal-form">
+                    <div class="form-group">
+                        <label for="proposalTitle">Title</label>
+                        <input type="text" id="proposalTitle" placeholder="Enter proposal title" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="proposalDescription">Description</label>
+                        <textarea id="proposalDescription" placeholder="Describe your proposal in detail" rows="5" required></textarea>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="votingDuration">Voting Duration (days)</label>
+                            <input type="number" id="votingDuration" min="1" max="30" value="7" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="proposalType">Type</label>
+                            <select id="proposalType" required>
+                                <option value="general">General</option>
+                                <option value="treasury">Treasury</option>
+                                <option value="governance">Governance</option>
+                                <option value="technical">Technical</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Create Proposal</button>
+                </form>
+            </div>
+
+            <!-- Delegate Tab -->
+            <div id="delegate" class="tab-content">
+                <div class="section-header">
+                    <h2>Vote Delegation</h2>
+                    <p class="section-desc">Delegate your voting power to another address</p>
+                </div>
+                <div class="delegation-info">
+                    <div class="info-card">
+                        <h3>Current Delegation</h3>
+                        <p id="currentDelegate">Self (No delegation)</p>
+                        <p class="voting-power">Voting Power: <span id="votingPower">0</span> tokens</p>
+                    </div>
+                </div>
+                <form id="delegateForm" class="delegate-form">
+                    <div class="form-group">
+                        <label for="delegateAddress">Delegate Address</label>
+                        <input type="text" id="delegateAddress" placeholder="0x..." pattern="^0x[a-fA-F0-9]{40}$">
+                        <small>Leave empty to delegate to yourself</small>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Update Delegation</button>
+                </form>
+            </div>
+
+            <!-- Statistics Tab -->
+            <div id="stats" class="tab-content">
+                <div class="section-header">
+                    <h2>Governance Statistics</h2>
+                    <p class="section-desc">Overview of voting activity and participation</p>
+                </div>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <h3>Total Proposals</h3>
+                        <div class="stat-value" id="totalProposals">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Active Voters</h3>
+                        <div class="stat-value" id="activeVoters">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Total Votes Cast</h3>
+                        <div class="stat-value" id="totalVotes">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Participation Rate</h3>
+                        <div class="stat-value" id="participationRate">-</div>
+                    </div>
+                </div>
+                <div class="recent-activity">
+                    <h3>Recent Activity</h3>
+                    <div id="activityList" class="activity-list">
+                        <!-- Recent activity will be loaded here -->
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Modals -->
+        <div id="proposalModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="modalProposalTitle"></h3>
+                    <button class="close-btn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="proposal-details">
+                        <p id="modalProposalDescription"></p>
+                        <div class="proposal-meta">
+                            <span class="meta-item">Type: <span id="modalProposalType"></span></span>
+                            <span class="meta-item">Status: <span id="modalProposalStatus"></span></span>
+                            <span class="meta-item">End Date: <span id="modalProposalEndDate"></span></span>
+                        </div>
+                    </div>
+                    <div class="voting-section">
+                        <div class="vote-results">
+                            <div class="vote-bar">
+                                <div class="vote-for" id="modalVoteFor">
+                                    <span>For: <span id="modalForCount">0</span></span>
+                                </div>
+                                <div class="vote-against" id="modalVoteAgainst">
+                                    <span>Against: <span id="modalAgainstCount">0</span></span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="vote-buttons" id="modalVoteButtons">
+                            <button id="voteFor" class="btn btn-success">Vote For</button>
+                            <button id="voteAgainst" class="btn btn-danger">Vote Against</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Toast Notifications -->
+        <div id="toast-container" class="toast-container"></div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
