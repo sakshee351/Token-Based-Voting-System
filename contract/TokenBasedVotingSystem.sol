@@ -243,3 +243,4 @@ contract TokenBasedVotingSystem {
         return votingActive && !paused && block.timestamp <= votingDeadline;
     }
 }
+
