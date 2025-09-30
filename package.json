@@ -7,12 +7,19 @@
     "test": "npx hardhat test",
     "compile": "npx hardhat compile",
     "clean": "npx hardhat clean",
+    "typechain": "npx hardhat typechain",
+    "build": "npm run clean && npm run compile && npm run typechain",
     "deploy": "npx hardhat run scripts/deploy.js --network coreTestnet",
     "deploy:localhost": "npx hardhat run scripts/deploy.js --network localhost",
+    "deploy:local": "npm run node & sleep 1 && npm run deploy:localhost",
     "node": "npx hardhat node",
     "coverage": "npx hardhat coverage",
-    "verify": "npx hardhat verify",
-    "size": "npx hardhat size-contracts"
+    "verify": "npx hardhat verify --network coreTestnet",
+    "size": "npx hardhat size-contracts",
+    "lint": "eslint . --ext .js,.ts,.sol",
+    "format": "prettier --write \"**/*.{js,ts,sol,json,md}\"",
+    "start": "npm run node",
+    "prepare": "npm run build"
   },
   "keywords": [
     "blockchain",
@@ -24,12 +31,19 @@
     "openzeppelin",
     "defi"
   ],
-  "author": "",
+  "author": "Your Name <you@example.com>",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yourusername/token-based-voting-system.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yourusername/token-based-voting-system/issues"
+  },
+  "homepage": "https://github.com/yourusername/token-based-voting-system#readme",
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^4.0.0",
     "@nomicfoundation/hardhat-verify": "^2.0.0",
-    "@nomicfoundation/hardhat-chai-matchers": "^2.0.0",
     "@nomicfoundation/hardhat-ethers": "^3.0.0",
     "@typechain/ethers-v6": "^0.5.0",
     "@typechain/hardhat": "^9.0.0",
@@ -43,7 +57,10 @@
     "hardhat-gas-reporter": "^1.0.9",
     "solidity-coverage": "^0.8.5",
     "typechain": "^8.3.0",
-    "typescript": "^5.2.0"
+    "typescript": "^5.2.0",
+    "prettier": "^2.8.0",
+    "eslint": "^8.45.0",
+    "eslint-plugin-import": "^2.30.0"
   },
   "dependencies": {
     "@openzeppelin/contracts": "^5.0.0"
