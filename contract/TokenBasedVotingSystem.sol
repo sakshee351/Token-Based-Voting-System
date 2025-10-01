@@ -1,10 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-/// @title Token-based weighted voting (improved)
-/// @notice Simple weighted voting where the owner mints "vote tokens" to addresses.
-///         This contract records the weight at time of vote to prevent balance-changes
-///         from altering historical votes.
+/// @title Token-based weighted voting (improved, reviewed)
+/// @notice Weighted voting using internal token bookkeeping. The contract
+///         records the voter's weight at vote time so later balance changes
+///         do not change historical votes.
+///
+/// Lifecycle:
+/// 1) Owner issues tokens (issueTokens) while voting is NOT active
+/// 2) Owner calls startVoting(days) to begin voting
+/// 3) Voters castVote(option) while votingActive
+/// 4) Owner ends voting via endVoting()
 contract TokenBasedVotingSystem {
     address public owner;
     uint256 public totalSupply;
@@ -28,7 +34,7 @@ contract TokenBasedVotingSystem {
     // disabled options
     mapping(uint256 => bool) public disabledOptions;
 
-    // voters list (kept for enumeration), but rely on totalVoters counter for accurate counts
+    // voters list (kept for enumeration), but rely on totalVoters for accurate counts
     address[] public votersList;
     mapping(address => bool) internal inVotersList;
     uint256 public totalVoters; // number of currently active voters (hasVoted == true)
@@ -38,6 +44,7 @@ contract TokenBasedVotingSystem {
     event TokensIssued(address indexed recipient, uint256 amount);
     event VoteCast(address indexed voter, uint256 option, uint256 weight);
     event VoteRevoked(address indexed voter, uint256 option, uint256 weight);
+    event VotingStarted(uint256 deadline);
     event VotingEnded();
     event VotingPaused();
     event VotingUnpaused();
@@ -46,6 +53,8 @@ contract TokenBasedVotingSystem {
     event VoterRemoved(address indexed voter);
     event OptionDisabled(uint256 indexed option);
     event VoteDelegated(address indexed from, address indexed to, uint256 weight);
+    event TokensDeposited(address indexed from, uint256 amount);
+    event TokensWithdrawn(address indexed to, uint256 amount);
 
     modifier onlyOwner() {
         require(msg.sender == owner, "Only owner");
@@ -67,12 +76,11 @@ contract TokenBasedVotingSystem {
         _;
     }
 
-    constructor(uint256 _votingDurationInDays, uint256 _totalOptions) {
-        require(_totalOptions > 0, "At least one option required");
+    constructor(uint256 _initialTotalOptions) {
+        require(_initialTotalOptions > 0, "At least one option required");
         owner = msg.sender;
-        votingDeadline = block.timestamp + (_votingDurationInDays * 1 days);
-        totalOptions = _totalOptions;
-        votingActive = true;
+        totalOptions = _initialTotalOptions;
+        votingActive = false; // explicitly start inactive; owner must call startVoting()
         paused = false;
     }
 
@@ -88,6 +96,35 @@ contract TokenBasedVotingSystem {
             totalSupply += amt;
             emit TokensIssued(recipients[i], amt);
         }
+    }
+
+    /// @notice Owner deposits tokens into contract's internal balance so withdrawTokens can work.
+    function depositToContract(uint256 amount) external onlyOwner {
+        require(amount > 0, "Zero amount");
+        // owner must have tokens in internal bookkeeping to deposit
+        require(tokenBalances[owner] >= amount, "Owner lacks tokens to deposit");
+        tokenBalances[owner] -= amount;
+        tokenBalances[address(this)] += amount;
+        emit TokensDeposited(owner, amount);
+    }
+
+    /// @notice Withdraw tokens held by the contract to `to` (owner only).
+    function withdrawTokens(address to, uint256 amount) external onlyOwner {
+        require(to != address(0), "Invalid destination");
+        require(tokenBalances[address(this)] >= amount, "Insufficient contract tokens");
+        tokenBalances[address(this)] -= amount;
+        tokenBalances[to] += amount;
+        emit TokensWithdrawn(to, amount);
+    }
+
+    /// @notice Start voting (owner only). Duration in days.
+    function startVoting(uint256 _votingDurationInDays) external onlyOwner {
+        require(!votingActive, "Voting already active");
+        require(_votingDurationInDays > 0, "Duration must be > 0");
+        votingDeadline = block.timestamp + (_votingDurationInDays * 1 days);
+        votingActive = true;
+        paused = false;
+        emit VotingStarted(votingDeadline);
     }
 
     /// @notice Cast vote for an option. Weight = token balance AT VOTE TIME (recorded).
@@ -170,6 +207,7 @@ contract TokenBasedVotingSystem {
 
     function extendVoting(uint256 extraDays) external onlyOwner {
         require(votingActive, "Voting ended");
+        require(extraDays > 0, "extraDays must be > 0");
         votingDeadline += (extraDays * 1 days);
         emit VotingExtended(votingDeadline);
     }
@@ -194,10 +232,11 @@ contract TokenBasedVotingSystem {
     }
 
     /// @notice Reset voting state. Only owner. Clears counts and voters but does not modify token balances.
+    /// @dev Beware: iterating over large votersList may be expensive; consider off-chain resets
     function resetVoting(uint256 _votingDurationInDays, uint256 _totalOptions) external onlyOwner {
         require(_totalOptions > 0, "Must have options");
 
-        // reset per-option counts & disabled flags
+        // reset per-option counts & disabled flags for the old range
         for (uint256 i = 1; i <= totalOptions; i++) {
             voteCounts[i] = 0;
             disabledOptions[i] = false;
@@ -209,7 +248,7 @@ contract TokenBasedVotingSystem {
             hasVoted[voter] = false;
             votedOption[voter] = 0;
             votedWeight[voter] = 0;
-            inVotersList[voter] = false;
+            inVotersList[voter] = false; // clear membership flag
         }
         delete votersList;
 
@@ -238,14 +277,6 @@ contract TokenBasedVotingSystem {
         emit VoteDelegated(msg.sender, to, weight);
     }
 
-    /// @notice Withdraw tokens held by the contract to `to` (owner only).
-    function withdrawTokens(address to, uint256 amount) external onlyOwner {
-        require(to != address(0), "Invalid destination");
-        require(tokenBalances[address(this)] >= amount, "Insufficient contract tokens");
-        tokenBalances[address(this)] -= amount;
-        tokenBalances[to] += amount;
-    }
-
     function changeOwner(address newOwner) external onlyOwner {
         require(newOwner != address(0), "Zero address");
         emit OwnerChanged(owner, newOwner);
@@ -268,6 +299,9 @@ contract TokenBasedVotingSystem {
         hasVoted[voter] = false;
         votedOption[voter] = 0;
         votedWeight[voter] = 0;
+
+        // clear membership flag so subsequent voting can repush safely
+        inVotersList[voter] = false;
 
         emit VoterRemoved(voter);
     }
