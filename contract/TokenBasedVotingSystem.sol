@@ -1,341 +1,95 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-/// @title Token-based weighted voting (improved, reviewed)
-/// @notice Weighted voting using internal token bookkeeping. The contract
-///         records the voter's weight at vote time so later balance changes
-///         do not change historical votes.
-///
-/// Lifecycle:
-/// 1) Owner issues tokens (issueTokens) while voting is NOT active
-/// 2) Owner calls startVoting(days) to begin voting
-/// 3) Voters castVote(option) while votingActive
-/// 4) Owner ends voting via endVoting()
-contract TokenBasedVotingSystem {
-    address public owner;
-    uint256 public totalSupply;
-    uint256 public totalOptions;
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+
+/**
+ * @title TokenBasedVotingSystem
+ * @notice A token-weighted voting system using ERC20 tokens.
+ *         Vote weight is snapshotted at vote time to prevent balance manipulation.
+ */
+contract TokenBasedVotingSystem is Ownable {
+    IERC20 public voteToken;
     uint256 public votingDeadline;
-    bool public votingActive;
-    bool public paused;
+    uint256 public totalOptions;
 
-    // token balances managed by this contract (simple internal token bookkeeping)
-    mapping(address => uint256) public tokenBalances;
-
-    // votes per option (options indexed 1..totalOptions)
-    mapping(uint256 => uint256) public voteCounts;
-
-    // voter status
-    mapping(address => bool) public hasVoted;
-    mapping(address => uint256) public votedOption;
-    // record weight at time of vote (prevents later balance changes from affecting historical vote)
-    mapping(address => uint256) public votedWeight;
-
-    // disabled options
-    mapping(uint256 => bool) public disabledOptions;
-
-    // voters list (kept for enumeration), but rely on totalVoters for accurate counts
-    address[] public votersList;
-    mapping(address => bool) internal inVotersList;
-    uint256 public totalVoters; // number of currently active voters (hasVoted == true)
-    uint256 public totalVotes;  // total weight of all current votes
-
-    // Events
-    event TokensIssued(address indexed recipient, uint256 amount);
-    event VoteCast(address indexed voter, uint256 option, uint256 weight);
-    event VoteRevoked(address indexed voter, uint256 option, uint256 weight);
-    event VotingStarted(uint256 deadline);
-    event VotingEnded();
-    event VotingPaused();
-    event VotingUnpaused();
-    event VotingExtended(uint256 newDeadline);
-    event OwnerChanged(address indexed oldOwner, address indexed newOwner);
-    event VoterRemoved(address indexed voter);
-    event OptionDisabled(uint256 indexed option);
-    event VoteDelegated(address indexed from, address indexed to, uint256 weight);
-    event TokensDeposited(address indexed from, uint256 amount);
-    event TokensWithdrawn(address indexed to, uint256 amount);
-
-    modifier onlyOwner() {
-        require(msg.sender == owner, "Only owner");
-        _;
+    struct Voter {
+        bool voted;
+        uint256 weight;
+        uint256 choice;
     }
 
-    modifier votingInProgress() {
-        require(votingActive && !paused && block.timestamp <= votingDeadline, "Voting not active");
-        _;
-    }
+    mapping(address => Voter) public voters;
+    mapping(uint256 => uint256) public votes; // option => total weight
 
-    modifier hasNotVoted() {
-        require(!hasVoted[msg.sender], "Already voted");
-        _;
-    }
+    event Voted(address indexed voter, uint256 choice, uint256 weight);
+    event VotingDeadlineExtended(uint256 newDeadline);
 
-    modifier hasVotedAlready() {
-        require(hasVoted[msg.sender], "Haven't voted");
-        _;
-    }
+    constructor(
+        address _tokenAddress,
+        uint256 _totalOptions,
+        uint256 _duration
+    ) {
+        require(_tokenAddress != address(0), "Invalid token");
+        require(_totalOptions > 1, "At least 2 options required");
 
-    constructor(uint256 _initialTotalOptions) {
-        require(_initialTotalOptions > 0, "At least one option required");
-        owner = msg.sender;
-        totalOptions = _initialTotalOptions;
-        votingActive = false; // explicitly start inactive; owner must call startVoting()
-        paused = false;
-    }
-
-    /// @notice Issue tokens to recipients (owner only). Disabled while voting is active to avoid mid-vote manipulation.
-    function issueTokens(address[] memory recipients, uint256[] memory amounts) external onlyOwner {
-        require(recipients.length == amounts.length, "Length mismatch");
-        require(!votingActive, "Cannot issue tokens while voting is active");
-        for (uint256 i = 0; i < recipients.length; i++) {
-            require(recipients[i] != address(0), "Invalid recipient");
-            uint256 amt = amounts[i];
-            require(amt > 0, "Zero amount");
-            tokenBalances[recipients[i]] += amt;
-            totalSupply += amt;
-            emit TokensIssued(recipients[i], amt);
-        }
-    }
-
-    /// @notice Owner deposits tokens into contract's internal balance so withdrawTokens can work.
-    function depositToContract(uint256 amount) external onlyOwner {
-        require(amount > 0, "Zero amount");
-        // owner must have tokens in internal bookkeeping to deposit
-        require(tokenBalances[owner] >= amount, "Owner lacks tokens to deposit");
-        tokenBalances[owner] -= amount;
-        tokenBalances[address(this)] += amount;
-        emit TokensDeposited(owner, amount);
-    }
-
-    /// @notice Withdraw tokens held by the contract to `to` (owner only).
-    function withdrawTokens(address to, uint256 amount) external onlyOwner {
-        require(to != address(0), "Invalid destination");
-        require(tokenBalances[address(this)] >= amount, "Insufficient contract tokens");
-        tokenBalances[address(this)] -= amount;
-        tokenBalances[to] += amount;
-        emit TokensWithdrawn(to, amount);
-    }
-
-    /// @notice Start voting (owner only). Duration in days.
-    function startVoting(uint256 _votingDurationInDays) external onlyOwner {
-        require(!votingActive, "Voting already active");
-        require(_votingDurationInDays > 0, "Duration must be > 0");
-        votingDeadline = block.timestamp + (_votingDurationInDays * 1 days);
-        votingActive = true;
-        paused = false;
-        emit VotingStarted(votingDeadline);
-    }
-
-    /// @notice Cast vote for an option. Weight = token balance AT VOTE TIME (recorded).
-    function castVote(uint256 option) external votingInProgress hasNotVoted {
-        require(option >= 1 && option <= totalOptions, "Invalid option");
-        require(!disabledOptions[option], "Option disabled");
-        uint256 weight = tokenBalances[msg.sender];
-        require(weight > 0, "No tokens");
-
-        voteCounts[option] += weight;
-        hasVoted[msg.sender] = true;
-        votedOption[msg.sender] = option;
-        votedWeight[msg.sender] = weight;
-
-        totalVotes += weight;
-        totalVoters += 1;
-
-        // keep votersList for enumeration but avoid duplicates
-        if (!inVotersList[msg.sender]) {
-            votersList.push(msg.sender);
-            inVotersList[msg.sender] = true;
-        }
-
-        emit VoteCast(msg.sender, option, weight);
-    }
-
-    /// @notice Revoke your vote while voting is in progress.
-    function revokeVote() external votingInProgress hasVotedAlready {
-        uint256 option = votedOption[msg.sender];
-        uint256 weight = votedWeight[msg.sender];
-        require(weight > 0, "Recorded weight zero");
-
-        // subtract recorded voted weight (safe underflow-protected in 0.8.x)
-        voteCounts[option] -= weight;
-
-        // update counters and reset voter state
-        totalVotes -= weight;
-        totalVoters -= 1;
-
-        hasVoted[msg.sender] = false;
-        votedOption[msg.sender] = 0;
-        votedWeight[msg.sender] = 0;
-
-        emit VoteRevoked(msg.sender, option, weight);
-    }
-
-    /// @notice Results allowed when voting ended or owner closed voting.
-    function getResults() external view returns (uint256 winningOption, uint256 winningVotes, uint256[] memory allVotes) {
-        require(block.timestamp > votingDeadline || !votingActive, "Voting ongoing");
-
-        allVotes = new uint256[](totalOptions);
-        winningVotes = 0;
-        winningOption = 1;
-
-        for (uint256 i = 1; i <= totalOptions; i++) {
-            uint256 count = voteCounts[i];
-            allVotes[i - 1] = count;
-            if (count > winningVotes) {
-                winningVotes = count;
-                winningOption = i;
-            }
-        }
-    }
-
-    function endVoting() external onlyOwner {
-        require(votingActive, "Voting already ended");
-        votingActive = false;
-        emit VotingEnded();
-    }
-
-    function pauseVoting() external onlyOwner {
-        paused = true;
-        emit VotingPaused();
-    }
-
-    function unpauseVoting() external onlyOwner {
-        paused = false;
-        emit VotingUnpaused();
-    }
-
-    function extendVoting(uint256 extraDays) external onlyOwner {
-        require(votingActive, "Voting ended");
-        require(extraDays > 0, "extraDays must be > 0");
-        votingDeadline += (extraDays * 1 days);
-        emit VotingExtended(votingDeadline);
-    }
-
-    function getVoterInfo(address voter) external view returns (uint256 balance, bool voted, uint256 option, uint256 weight) {
-        balance = tokenBalances[voter];
-        voted = hasVoted[voter];
-        option = voted ? votedOption[voter] : 0;
-        weight = voted ? votedWeight[voter] : 0;
-    }
-
-    function getContractInfo() external view returns (uint256 deadline, uint256 options, bool active, uint256 supply, bool isPaused) {
-        return (votingDeadline, totalOptions, votingActive, totalSupply, paused);
-    }
-
-    function getAllVoters() external view returns (address[] memory) {
-        return votersList;
-    }
-
-    function getVoteWeight(address voter) external view returns (uint256) {
-        return tokenBalances[voter];
-    }
-
-    /// @notice Reset voting state. Only owner. Clears counts and voters but does not modify token balances.
-    /// @dev Beware: iterating over large votersList may be expensive; consider off-chain resets
-    function resetVoting(uint256 _votingDurationInDays, uint256 _totalOptions) external onlyOwner {
-        require(_totalOptions > 0, "Must have options");
-
-        // reset per-option counts & disabled flags for the old range
-        for (uint256 i = 1; i <= totalOptions; i++) {
-            voteCounts[i] = 0;
-            disabledOptions[i] = false;
-        }
-
-        // reset voter state
-        for (uint256 i = 0; i < votersList.length; i++) {
-            address voter = votersList[i];
-            hasVoted[voter] = false;
-            votedOption[voter] = 0;
-            votedWeight[voter] = 0;
-            inVotersList[voter] = false; // clear membership flag
-        }
-        delete votersList;
-
+        voteToken = IERC20(_tokenAddress);
         totalOptions = _totalOptions;
-        votingDeadline = block.timestamp + (_votingDurationInDays * 1 days);
-        votingActive = true;
-        paused = false;
-
-        // reset counters
-        totalVoters = 0;
-        totalVotes = 0;
+        votingDeadline = block.timestamp + _duration;
     }
 
-    /// @notice Delegate your tokens to another address (cannot delegate to someone who already voted).
-    ///         After delegation your balance becomes 0 here; owner cannot mint new tokens to you during active voting.
-    function delegateVote(address to) external votingInProgress hasNotVoted {
-        require(to != address(0), "Cannot delegate to zero");
-        require(to != msg.sender, "Cannot delegate to yourself");
-        uint256 weight = tokenBalances[msg.sender];
-        require(weight > 0, "No tokens to delegate");
-        require(!hasVoted[to], "Delegatee already voted");
-
-        tokenBalances[msg.sender] = 0;
-        tokenBalances[to] += weight;
-
-        emit VoteDelegated(msg.sender, to, weight);
+    modifier onlyBeforeDeadline() {
+        require(block.timestamp <= votingDeadline, "Voting has ended");
+        _;
     }
 
-    function changeOwner(address newOwner) external onlyOwner {
-        require(newOwner != address(0), "Zero address");
-        emit OwnerChanged(owner, newOwner);
-        owner = newOwner;
+    modifier onlyValidChoice(uint256 choice) {
+        require(choice < totalOptions, "Invalid choice");
+        _;
     }
 
-    /// @notice Remove a voter's recorded vote (owner only). Uses recorded votedWeight to subtract safely.
-    function removeVoter(address voter) external onlyOwner {
-        require(hasVoted[voter], "Voter has not voted");
-        uint256 option = votedOption[voter];
-        uint256 weight = votedWeight[voter];
-        require(weight > 0, "Recorded weight zero");
+    /**
+     * @notice Cast a vote based on current token balance.
+     * @param choice The index of the option to vote for
+     */
+    function vote(uint256 choice) external onlyBeforeDeadline onlyValidChoice(choice) {
+        Voter storage sender = voters[msg.sender];
+        require(!sender.voted, "Already voted");
 
-        voteCounts[option] -= weight;
+        uint256 weight = voteToken.balanceOf(msg.sender);
+        require(weight > 0, "No voting power");
 
-        // update counters and reset voter state
-        totalVotes -= weight;
-        totalVoters -= 1;
+        sender.voted = true;
+        sender.weight = weight;
+        sender.choice = choice;
 
-        hasVoted[voter] = false;
-        votedOption[voter] = 0;
-        votedWeight[voter] = 0;
+        votes[choice] += weight;
 
-        // clear membership flag so subsequent voting can repush safely
-        inVotersList[voter] = false;
-
-        emit VoterRemoved(voter);
+        emit Voted(msg.sender, choice, weight);
     }
 
-    function getVoteSummary() external view returns (uint256 votersCount, uint256 votesTotal) {
-        // return counters maintained during cast/revoke/remove
-        votersCount = totalVoters;
-        votesTotal = totalVotes;
-    }
+    /**
+     * @notice Get the winning option after deadline.
+     */
+    function winningOption() external view returns (uint256 winner) {
+        require(block.timestamp > votingDeadline, "Voting not ended");
 
-    function getVotePercentages() external view returns (uint256[] memory percentages) {
-        percentages = new uint256[](totalOptions);
-        uint256 votes = totalVotes;
-
-        for (uint256 i = 1; i <= totalOptions; i++) {
-            if (votes > 0) {
-                percentages[i - 1] = (voteCounts[i] * 100) / votes;
-            } else {
-                percentages[i - 1] = 0;
+        uint256 winningVoteCount = 0;
+        for (uint256 i = 0; i < totalOptions; i++) {
+            if (votes[i] > winningVoteCount) {
+                winningVoteCount = votes[i];
+                winner = i;
             }
         }
     }
 
-    function disableOption(uint256 option) external onlyOwner {
-        require(option >= 1 && option <= totalOptions, "Invalid option");
-        disabledOptions[option] = true;
-        emit OptionDisabled(option);
-    }
-
-    function isOptionDisabled(uint256 option) external view returns (bool) {
-        return disabledOptions[option];
-    }
-
-    function isVotingActive() external view returns (bool) {
-        return votingActive && !paused && block.timestamp <= votingDeadline;
+    /**
+     * @notice Extend deadline (only owner).
+     */
+    function extendDeadline(uint256 extraTime) external onlyOwner {
+        require(extraTime > 0, "Invalid extension");
+        votingDeadline += extraTime;
+        emit VotingDeadlineExtended(votingDeadline);
     }
 }
